@@ -1,0 +1,44 @@
+name: Build plegma_core.exe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "core/**"
+      - ".github/workflows/build-core.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compile (static runtime, no installs needed on the PC)
+        shell: cmd
+        run: |
+          cd core
+          cl /nologo /O2 /EHsc /std:c++17 /MT /W3 plegma_core.cpp /Fe:plegma_core.exe
+
+      - name: Smoke test
+        shell: cmd
+        run: |
+          core\plegma_core.exe & if %ERRORLEVEL% NEQ 2 exit /b 1
+          exit /b 0
+
+      - name: Commit the executable into the add-on
+        shell: bash
+        run: |
+          mkdir -p plegma/bin
+          cp core/plegma_core.exe plegma/bin/plegma_core.exe
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add plegma/bin/plegma_core.exe
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git commit -m "Νέο plegma_core.exe (αυτόματο build)"
+          git push

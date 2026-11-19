@@ -9,3 +9,6 @@ cache/
 core/build/
 .vs/
 *.obj.tmp
+
+# Linux build of the core (local tests only)
+plegma/bin/plegma_core

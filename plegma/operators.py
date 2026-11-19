@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import colorsys
+import os
 import time
 import traceback
 
@@ -11,6 +12,7 @@ from . import segment as seg
 from . import remesh_core as rc
 from . import guided
 from . import fieldquad
+from . import core_bridge
 from .engine import quadwild
 
 FS = seg.FS
@@ -19,6 +21,13 @@ PREVIEW = "Plegma_Parts"
 
 def _log(msg):
     print("[Πλέγμα]", msg)
+
+
+def _cache_dir():
+    try:
+        return bpy.utils.extension_path_user(__package__, path="cache", create=True)
+    except Exception:
+        return os.path.join(bpy.app.tempdir, "plegma_cache")
 
 
 def active_mesh(ctx):
@@ -570,10 +579,15 @@ class PLEGMA_OT_remesh(bpy.types.Operator):
                                     try:
                                         on_seam = (lambda v, _ax=tuple(used_axes), _e=eps * 5:
                                                    any(abs(v.co[a]) < _e for a in _ax)) if used_axes else None
-                                        res = fieldquad.remesh_quads(work.copy(), target, s.tri_iterations, _log,
-                                                                     s.sharp_angle if s.keep_sharp else 180.0,
-                                                                     fill_all=not any(e.is_boundary for e in part.edges),
-                                                                     keep_open=on_seam)
+                                        closed = not any(e.is_boundary for e in part.edges)
+                                        sharp = s.sharp_angle if s.keep_sharp else 180.0
+                                        if core_bridge.available():   # C++ core: fast, one process per part
+                                            res = core_bridge.remesh_quads(
+                                                work.copy(), target, _cache_dir(), f"part_{fid}", _log, sharp,
+                                                fill_all=closed, seam_axes=used_axes, seam_eps=eps * 5)
+                                        else:
+                                            res = fieldquad.remesh_quads(work.copy(), target, s.tri_iterations, _log, sharp,
+                                                                         fill_all=closed, keep_open=on_seam)
                                     except Exception as fe:
                                         _log(f"  το πεδίο ροής απέτυχε ({fe}), απλή μέθοδος")
                                         res = guided.remesh_quads(work.copy(), target, s.tri_iterations, _log, align=False)

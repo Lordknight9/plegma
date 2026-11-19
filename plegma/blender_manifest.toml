@@ -1,0 +1,25 @@
+schema_version = "1.0.0"
+
+id = "plegma"
+version = "0.5.0"
+name = "Plegma (Πλέγμα)"
+tagline = "Quad and triangle remesher that splits a model into separate parts"
+maintainer = "Alexandros Orfanos"
+type = "add-on"
+
+tags = ["Mesh", "Modeling"]
+
+blender_version_min = "4.2.0"
+
+# The optional QuadWild engine (downloaded on demand) is GPL-3.0,
+# so the whole add-on is distributed under the same license.
+license = ["SPDX:GPL-3.0-or-later"]
+
+platforms = ["windows-x64"]
+
+[permissions]
+files = "Write temporary meshes for the QuadWild engine"
+network = "Download the optional QuadWild engine from GitHub"
+
+[build]
+paths_exclude_pattern = ["__pycache__/", "/.git/", "/*.zip"]

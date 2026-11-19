@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.zip
+*.blend
+*.blend1
+build/
+dist/
+cache/
+core/build/
+.vs/
+*.obj.tmp

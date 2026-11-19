@@ -63,7 +63,7 @@ def segment(areas, a, b, cost, elen, stop, max_parts=0, min_frac=0.002, log=prin
     low = min(np.quantile(cost, 0.5), stop * 0.35)
     reg = _components(n, a[cost < low], b[cost < low])
     nreg = int(reg.max()) + 1
-    log(f"  smart: {nreg} αρχικές περιοχές")
+    log(f"  smart: {nreg} initial regions")
 
     # 2. region adjacency with boundary length and cost
     ra, rb = reg[a], reg[b]

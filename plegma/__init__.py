@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Πλέγμα (Plegma) - quad / triangle remesher that keeps each part of a model as its own island.
 
-from . import props, operators, ui
+from . import props, operators, jobs, ui
 
-_modules = (props, operators, ui)
+_modules = (props, operators, jobs, ui)
 
 
 def register():

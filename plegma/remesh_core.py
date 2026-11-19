@@ -97,7 +97,7 @@ def symmetry_matrix(ctx, ob, s):
     else:
         ref = s.sym_object
         if ref is None:
-            raise RuntimeError("Διάλεξε το object που ορίζει τον άξονα συμμετρίας")
+            raise RuntimeError("Pick the object that defines the symmetry axis")
         loc, rot, _ = ref.matrix_world.decompose()
         frame = Matrix.LocRotScale(loc, rot, None)
     return frame.inverted() @ ob.matrix_world
@@ -170,7 +170,7 @@ def run_quadriflow(part_bm, target, sharp, log):
                 preserve_attributes=False, smooth_normals=False, mode='FACES',
                 target_faces=max(int(target), 8), seed=0)
         if 'FINISHED' not in res or len(ob.data.polygons) == 0:
-            raise RuntimeError("Quadriflow απέτυχε")
+            raise RuntimeError("Quadriflow failed")
         bm = bmesh.new()
         bm.from_mesh(ob.data)
         return bm

@@ -201,7 +201,7 @@ def remesh_quads(part_bm, target, iterations=8, log=print, align=True):
         feat, _ = _features(tris, lay)
         u, n = cross_field(tris, feat)
         paired = aligned_pairs(tris, feat, u, n)
-        log(f"  πεδίο: {paired} ζεύγη τριγώνων στοιχισμένα")
+        log(f"  field: {paired} triangle pairs aligned")
         feat, _ = _features(tris, lay)
     for e in tris.edges:
         e.smooth = e not in feat

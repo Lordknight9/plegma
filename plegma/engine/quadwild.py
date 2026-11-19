@@ -45,13 +45,13 @@ def is_installed():
 def install():
     """Download the QRemeshify release for this OS and keep only its native libraries."""
     if not bpy.app.online_access:
-        raise RuntimeError("Η σύνδεση στο internet είναι κλειστή (Preferences > System > Network > Allow Online Access)")
+        raise RuntimeError("Online access is off (Preferences > System > Network > Allow Online Access)")
     osname = {"Windows": "windows", "Darwin": "macos"}.get(platform.system(), "linux")
     req = urllib.request.Request(RELEASE_API, headers={"User-Agent": "plegma-addon"})
     rel = json.loads(urllib.request.urlopen(req, timeout=30).read())
     asset = next((a for a in rel["assets"] if osname in a["name"].lower() and a["name"].endswith(".zip")), None)
     if asset is None:
-        raise RuntimeError("Δεν βρέθηκε έκδοση QuadWild για αυτό το λειτουργικό")
+        raise RuntimeError("No QuadWild build found for this operating system")
     data = urllib.request.urlopen(urllib.request.Request(asset["browser_download_url"],
                                   headers={"User-Agent": "plegma-addon"}), timeout=120).read()
     dest = engine_dir(create=True)
@@ -64,7 +64,7 @@ def install():
                     f.write(z.read(name))
                 n += 1
     if not is_installed():
-        raise RuntimeError("Η λήψη ολοκληρώθηκε αλλά λείπουν οι βιβλιοθήκες QuadWild")
+        raise RuntimeError("The download finished but the QuadWild libraries are missing")
     return rel.get("tag_name", "?"), n
 
 
@@ -119,7 +119,7 @@ def remesh(verts, tris, sharp, workdir, tag, target_faces, sharp_angle, log=prin
     job = {"lib_dir": engine_dir(), "lib_qw": a, "lib_qp": b, "base": base, "sharp_angle": float(sharp_angle)}
     code, out = _run(dict(job, stage="prepare"), timeout)
     if code != 0 or not os.path.exists(base + "_rem_p0.obj"):
-        raise RuntimeError(f"QuadWild (προετοιμασία) απέτυχε, κωδικός {code}")
+        raise RuntimeError(f"QuadWild (prepare) failed, code {code}")
 
     scale = 1.0
     best = None
@@ -132,13 +132,13 @@ def remesh(verts, tris, sharp, workdir, tag, target_faces, sharp_angle, log=prin
         if not os.path.exists(path):
             if best is not None:
                 break
-            raise RuntimeError(f"QuadWild (quads) απέτυχε, κωδικός {code}")
+            raise RuntimeError(f"QuadWild (quads) failed, code {code}")
         v, f = _read_obj(path)
         n = max(len(f), 1)
         err = abs(n - target_faces) / max(target_faces, 1)
         if best is None or err < best[0]:
             best = (err, v, f)
-        log(f"  QuadWild {tag}: scale {scale:.3f} -> {n} quads (στόχος {target_faces})")
+        log(f"  QuadWild {tag}: scale {scale:.3f} -> {n} quads (target {target_faces})")
         if err < 0.2:
             break
         scale *= (n / max(target_faces, 1)) ** 0.5

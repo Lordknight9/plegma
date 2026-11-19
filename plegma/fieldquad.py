@@ -449,7 +449,7 @@ def remesh_quads(part_bm, target, iterations=6, log=print, sharp_angle=40.0, fil
     P, faces = extract(V, N, Q, O, E, h, merge_tol)
     tris.free()
     nq = sum(1 for f in faces if len(f) == 4)
-    log(f"  πεδίο θέσεων: {len(P)} κόμβοι, {len(faces)} faces ({nq} quads πριν το τελικό σπάσιμο)")
+    log(f"  position field: {len(P)} nodes, {len(faces)} faces ({nq} quads before the final split)")
 
     bm = bmesh.new()
     vs = [bm.verts.new(p) for p in P]

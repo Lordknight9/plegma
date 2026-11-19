@@ -23,13 +23,11 @@ jobs:
         shell: cmd
         run: |
           cd core
-          cl /nologo /O2 /EHsc /std:c++17 /MT /W3 plegma_core.cpp /Fe:plegma_core.exe
+          cl /nologo /O2 /EHsc /std:c++17 /MT /W3 /D_CRT_SECURE_NO_WARNINGS plegma_core.cpp /Fe:plegma_core.exe
 
-      - name: Smoke test
-        shell: cmd
-        run: |
-          core\plegma_core.exe & if %ERRORLEVEL% NEQ 2 exit /b 1
-          exit /b 0
+      - name: Smoke test (remesh a sphere)
+        shell: pwsh
+        run: python core/test_smoke.py core/plegma_core.exe
 
       - name: Commit the executable into the add-on
         shell: bash

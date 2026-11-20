@@ -489,5 +489,5 @@ def by_smart(obj, detail=0.5, color_weight=0.3, max_parts=0, min_frac=0.003, pro
     fa, fb = face_adjacency(me)
     _, _, farea = face_arrays(me)
     labels = majority_filter(labels - 1, fa, fb, 3)
-    labels = merge_small(labels, farea, fa, fb, min_frac)
+    labels = merge_small(labels, farea, fa, fb, min(min_frac, 0.0002) if auto else min_frac)
     return relabel(labels)

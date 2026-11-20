@@ -17,6 +17,7 @@ from . import remesh_core as rc
 from . import guided
 from . import fieldquad
 from . import core_bridge
+from . import density
 from . import operators as ops
 from .engine import quadwild
 
@@ -88,46 +89,125 @@ def source_of(ob):
     return ob
 
 
+_VALUE_KEY = {'FLOAT': 'value', 'INT': 'value', 'BOOLEAN': 'value', 'INT8': 'value',
+              'FLOAT_VECTOR': 'vector', 'FLOAT2': 'vector', 'FLOAT_COLOR': 'color', 'BYTE_COLOR': 'color',
+              'INT32_2D': 'value', 'QUATERNION': 'value'}
+_WIDTH = {'FLOAT_VECTOR': 3, 'FLOAT2': 2, 'FLOAT_COLOR': 4, 'BYTE_COLOR': 4, 'INT32_2D': 2, 'QUATERNION': 4}
+
+
 class Source:
-    """The (evaluated) source mesh, its parts, areas and geometry hashes."""
+    """The evaluated source mesh as numpy arrays: parts, areas, geometry hashes.
+    A part is cut out straight from the arrays, so the whole model is never copied per part."""
 
     def __init__(self, ctx, ob):
         dg = ctx.evaluated_depsgraph_get()
         ev = ob.evaluated_get(dg)
-        me = ev.to_mesh()
-        try:
-            self.src = bmesh.new()
-            self.src.from_mesh(me)
-            ls, lt, area = seg.face_arrays(me)
-            nl = len(me.loops)
-            lv = np.empty(nl, np.int32); me.loops.foreach_get("vertex_index", lv)
-            co = np.empty(len(me.vertices) * 3, np.float32); me.vertices.foreach_get("co", co)
-            co = co.reshape(-1, 3)
-            fs = seg.by_face_sets(me).astype(np.int64)
-            mats = np.empty(len(me.polygons), np.int32); me.polygons.foreach_get("material_index", mats)
-        finally:
-            ev.to_mesh_clear()
-        for lay in list(self.src.loops.layers.color):
-            if lay.name == ops.PREVIEW:
-                self.src.loops.layers.color.remove(lay)
-        self.src.faces.ensure_lookup_table()
+        self.me = bpy.data.meshes.new_from_object(ev, preserve_all_data_layers=True, depsgraph=dg)
+        me = self.me
+        for ca in list(me.color_attributes):
+            if ca.name == ops.PREVIEW:
+                me.color_attributes.remove(ca)
+        self.ls, self.lt, area = seg.face_arrays(me)
+        self.lv = np.empty(len(me.loops), np.int32); me.loops.foreach_get("vertex_index", self.lv)
+        co = np.empty(len(me.vertices) * 3, np.float32); me.vertices.foreach_get("co", co)
+        self.co = co.reshape(-1, 3).astype(np.float64)
+        fs = seg.by_face_sets(me).astype(np.int64)
+        self.mats = np.empty(len(me.polygons), np.int32); me.polygons.foreach_get("material_index", self.mats)
         self.labels = fs
-        self.mats = mats
         self.areas = area.astype(np.float64)
         self.ids = [int(i) for i in np.unique(fs)]
+        self.has_seg = guided.SEG in me.attributes
+        self._kface = None
         # geometry hash per part (positions of the part's corners, so it ignores index order changes)
-        face_of_loop = np.repeat(np.arange(len(lt)), lt)
-        loop_label = fs[face_of_loop]
+        loop_label = fs[np.repeat(np.arange(len(self.lt)), self.lt)]
         self.geo = {}
         for fid in self.ids:
             m = loop_label == fid
             h = hashlib.md5()
-            h.update(np.ascontiguousarray(co[lv[m]]).tobytes())
-            h.update(np.ascontiguousarray(lt[fs == fid]).tobytes())
+            h.update(np.ascontiguousarray(self.co[self.lv[m]].astype(np.float32)).tobytes())
+            h.update(np.ascontiguousarray(self.lt[fs == fid]).tobytes())
             self.geo[fid] = h.hexdigest()[:16]
 
     def free(self):
-        self.src.free()
+        if self.me is not None:
+            bpy.data.meshes.remove(self.me)
+            self.me = None
+
+    # -------------------------------------------------- one part
+    def _loops_of(self, faces):
+        tot = self.lt[faces]
+        offs = np.cumsum(tot) - tot
+        loops = np.arange(int(tot.sum())) - np.repeat(offs, tot) + np.repeat(self.ls[faces], tot)
+        return loops, offs
+
+    def part_verts(self, mask):
+        loops, _ = self._loops_of(np.flatnonzero(mask))
+        return np.unique(self.lv[loops])
+
+    def part_bm(self, mask, attributes=True):
+        """Cleaned, triangulated bmesh of the faces in mask (with UVs, colours and the segment layer)."""
+        faces = np.flatnonzero(mask)
+        loops, offs = self._loops_of(faces)
+        verts, inv = np.unique(self.lv[loops], return_inverse=True)
+        m = bpy.data.meshes.new("plegma_part")
+        try:
+            m.vertices.add(len(verts))
+            m.vertices.foreach_set("co", self.co[verts].astype(np.float32).ravel())
+            m.loops.add(len(loops))
+            m.loops.foreach_set("vertex_index", inv.astype(np.int32))
+            m.polygons.add(len(faces))
+            m.polygons.foreach_set("loop_start", offs.astype(np.int32))
+            m.update(calc_edges=True)
+            if attributes:
+                pick = {'POINT': verts, 'CORNER': loops, 'FACE': faces}
+                for at in self.me.attributes:
+                    name = at.name
+                    if at.domain not in pick or name == "position" or at.data_type not in _VALUE_KEY:
+                        continue
+                    if name.startswith(".") and name != seg.FS:
+                        continue
+                    key = _VALUE_KEY[at.data_type]
+                    w = _WIDTH.get(at.data_type, 1)
+                    n = len(at.data)
+                    dt = np.float32 if at.data_type in {'FLOAT', 'FLOAT_VECTOR', 'FLOAT2', 'FLOAT_COLOR', 'BYTE_COLOR', 'QUATERNION'} \
+                        else (bool if at.data_type == 'BOOLEAN' else np.int32)
+                    buf = np.empty(n * w, dt)
+                    try:
+                        at.data.foreach_get(key, buf)
+                    except Exception:
+                        continue
+                    sel = buf.reshape(n, w)[pick[at.domain]].ravel()
+                    dst = m.attributes.get(name) or m.attributes.new(name, at.data_type, at.domain)
+                    try:
+                        dst.data.foreach_set(key, sel)
+                    except Exception:
+                        pass
+            bm = bmesh.new()
+            bm.from_mesh(m)
+        finally:
+            bpy.data.meshes.remove(m)
+        c = self.co[verts]
+        size = float((c.max(0) - c.min(0)).max()) if len(c) else 1.0
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=max(size, 1e-6) * 1e-6)
+        bmesh.ops.dissolve_degenerate(bm, edges=bm.edges, dist=max(size, 1e-6) * 1e-7)
+        bmesh.ops.triangulate(bm, faces=bm.faces, quad_method='BEAUTY', ngon_method='BEAUTY')
+        return bm
+
+    # -------------------------------------------------- curvature (for the automatic density)
+    def face_curvature(self):
+        if self._kface is None:
+            from . import density
+            me = self.me
+            ed = np.empty(len(me.edges) * 2, np.int32); me.edges.foreach_get("vertices", ed)
+            vn = np.empty(len(me.vertices) * 3, np.float32)
+            try:
+                me.vertex_normals.foreach_get("vector", vn)
+            except AttributeError:
+                me.vertices.foreach_get("normal", vn)
+            kv = density.vertex_curvature(self.co, ed.reshape(-1, 2), vn.reshape(-1, 3))
+            fl = np.repeat(np.arange(len(self.lt)), self.lt)
+            self._kface = np.bincount(fl, weights=kv[self.lv], minlength=len(self.lt)) / np.maximum(self.lt, 1)
+        return self._kface
 
 
 # ------------------------------------------------------------------ the job
@@ -135,7 +215,7 @@ class Source:
 class Job:
     """which: 'NEXT' (one part), 'ALL' (every part that needs it) or 'ONE' (the given part)."""
 
-    def __init__(self, ctx, ob, which='ALL', index=-1):
+    def __init__(self, ctx, ob, which='ALL', index=-1, need_targets=True):
         self.ctx = ctx
         self.ob = source_of(ob)
         self.s = ctx.scene.plegma
@@ -160,10 +240,17 @@ class Job:
         self.axes = [i for i, on in enumerate((s.sym_x, s.sym_y, s.sym_z)) if on]
         self.to_sym = rc.symmetry_matrix(ctx, ob, s) if self.axes else None
 
-        weights = {fid: S.areas[S.labels == fid].sum() * (self.parts[fid].density if fid in self.parts else 1.0)
-                   for fid in S.ids if self.mode_of(fid) in {'QUAD', 'TRI'}}
-        wsum = sum(weights.values()) or 1.0
-        self.target = {fid: max(int(s.target_faces * w / wsum), 24) for fid, w in weights.items()}
+        live = [fid for fid in S.ids if self.mode_of(fid) in {'QUAD', 'TRI'}]
+        dens = lambda fid: self.parts[fid].density if fid in self.parts else 1.0
+        if not need_targets:
+            self.target = {}
+        elif s.density_mode == 'AUTO':
+            self.target = density.part_targets(S, s.detail_level, live, factor=dens,
+                                               max_faces=s.max_faces, log=_log)
+        else:
+            weights = {fid: S.areas[S.labels == fid].sum() * dens(fid) for fid in live}
+            wsum = sum(weights.values()) or 1.0
+            self.target = {fid: max(int(s.target_faces * w / wsum), 24) for fid, w in weights.items()}
 
         # small to large
         self.order = sorted(S.ids, key=lambda f: S.areas[S.labels == f].sum())
@@ -204,7 +291,7 @@ class Job:
         d = dict(v=CORE_TAG, mode=self.mode_of(fid), engine=self.engine, target=self.target.get(fid, 0),
                  sharp=s.sharp_angle if s.keep_sharp else 180.0, axes=self.axes, tri=s.tri_iterations,
                  sym=None if self.to_sym is None else [round(x, 5) for r in self.to_sym for x in r],
-                 seg=self.source.src.faces.layers.int.get(guided.SEG) is not None)
+                 seg=self.source.has_seg)
         return hashlib.md5((self.source.geo[fid] + json.dumps(d, sort_keys=True)).encode()).hexdigest()[:20]
 
     def needs_work(self, fid):
@@ -251,14 +338,14 @@ class Job:
         S = self.source
         mode = self.mode_of(fid)
         mask = S.labels == fid
-        part = rc.bm_from_part(S.src, mask)
+        part = S.part_bm(mask, attributes=S.has_seg)
         if not part.faces:
             part.free()
             return None
         if mode == 'KEEP':
             return part
 
-        target = self.target[fid]
+        target = self.target[fid] * (2 if mode == 'TRI' else 1)
         eps = self.diag * 1e-4
         work = part.copy()
         used_axes = []
@@ -339,9 +426,9 @@ class Job:
             if p.status not in {'DONE', 'APPROVED'} or not p.cache_key or not os.path.isfile(cache_path(p.cache_key)):
                 continue
             res = load_result(p.cache_key)
-            if s.transfer and self.mode_of(fid) != 'KEEP':
+            if s.transfer:
                 try:
-                    tsrc = rc.bm_from_part(S.src, S.labels == fid)
+                    tsrc = S.part_bm(S.labels == fid)
                     rc.Transfer(tsrc).apply(res)
                     tsrc.free()
                 except Exception as e:
@@ -565,7 +652,7 @@ class PLEGMA_OT_build(bpy.types.Operator):
         return ob is not None and ob.type == 'MESH'
 
     def execute(self, ctx):
-        job = Job(ctx, ops.active_mesh(ctx), 'ONE', -1)   # nothing queued: just load the source
+        job = Job(ctx, ops.active_mesh(ctx), 'ONE', -1, need_targets=False)   # nothing queued: just load the source
         new_ob = job.finish(select=True)
         if new_ob is None:
             self.report({'WARNING'}, "No finished parts yet. Press Process first.")

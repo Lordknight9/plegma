@@ -78,6 +78,17 @@ class PlegmaSettings(bpy.types.PropertyGroup):
         ('QUADRIFLOW', "Quadriflow", "Built into Blender, stable"),
         ('QUADWILD', "QuadWild (experimental)", "Better edge flow, but still unstable on this PC"),
     ], default='AUTO')
+    density_mode: EnumProperty(name="Face count", items=[
+        ('AUTO', "Automatic", "Every part gets as many faces as its shape needs (curvature, narrow areas, thickness)"),
+        ('TARGET', "Target count", "A fixed face count for the whole model, shared between the parts by area"),
+    ], default='AUTO')
+    detail_level: EnumProperty(name="Detail", items=[
+        ('LOW', "Low", "Few faces, keeps only the main shapes"),
+        ('MEDIUM', "Medium", "Balanced"),
+        ('HIGH', "High", "Many faces, keeps small details"),
+    ], default='MEDIUM')
+    max_faces: IntProperty(name="Max faces", min=0, soft_max=500000, default=0,
+                           description="Upper limit for the whole model in Automatic mode (0 = no limit)")
     target_faces: IntProperty(name="Target faces", min=50, soft_max=200000, default=8000,
                               description="Approximate face count of the whole model (shared between parts by area)")
     sym_x: BoolProperty(name="X", default=False, description="Symmetry on the X axis")

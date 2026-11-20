@@ -110,8 +110,13 @@ class PLEGMA_PT_remesh(_Sub, bpy.types.Panel):
         layout = self.layout
         s = ctx.scene.plegma
         layout.row().prop(s, "mode", expand=True)
+        layout.row().prop(s, "density_mode", expand=True)
         col = layout.column(align=True)
-        col.prop(s, "target_faces")
+        if s.density_mode == 'AUTO':
+            col.row().prop(s, "detail_level", expand=True)
+            col.prop(s, "max_faces")
+        else:
+            col.prop(s, "target_faces")
         if s.mode == 'QUAD':
             col.prop(s, "engine", text="Engine")
             if s.engine == 'QUADWILD' and not quadwild.is_installed():

@@ -140,3 +140,161 @@ def segment(areas, a, b, cost, elen, stop, max_parts=0, min_frac=0.002, log=prin
     lab = root[reg]
     _, lab = np.unique(lab, return_inverse=True)
     return lab + 1
+
+
+# ====================================================================== automatic parts (v0.9)
+# colour classes + concave creases, then a second, finer pass inside the large parts only,
+# small crease fragments absorbed, small islands of one colour that sit close together
+# (honeycomb cells, the letters of a word) grouped into one part.
+
+def kmeans(x, k, iters=30, seed=1):
+    rng = np.random.default_rng(seed)
+    c = [x[rng.integers(len(x))]]
+    for _ in range(1, k):                       # k-means++
+        d = np.min(((x[:, None, :] - np.array(c)[None]) ** 2).sum(-1), 1)
+        if d.sum() <= 0:
+            break
+        c.append(x[rng.choice(len(x), p=d / d.sum())])
+    c = np.array(c)
+    for _ in range(iters):
+        lab = np.argmin(((x[:, None, :] - c[None]) ** 2).sum(-1), 1)
+        nc = np.array([x[lab == i].mean(0) if np.any(lab == i) else c[i] for i in range(len(c))])
+        if np.allclose(nc, c, atol=1e-3):
+            break
+        c = nc
+    return lab, c
+
+
+def color_classes(lab_cols, kmax=6, min_de=20.0):
+    """Material classes from colour: the largest k whose centres are all at least min_de apart
+    (lightness at half weight, so shading baked into AI textures does not split a material)."""
+    x = lab_cols * np.array([0.5, 1.0, 1.0])
+    best = np.zeros(len(x), np.int64)
+    for k in range(2, kmax + 1):
+        lab, c = kmeans(x, k)
+        if len(c) < k:
+            break
+        d = np.linalg.norm(c[:, None] - c[None], axis=2) + np.eye(k) * 1e9
+        if d.min() < min_de or np.bincount(lab, minlength=k).min() < 0.002 * len(x):
+            break
+        best = lab
+    return best
+
+
+def _relabel(lab):
+    return np.unique(lab, return_inverse=True)[1].ravel()
+
+
+def _merge_small(lab, area, a, b, elen, frac, cls=None):
+    """Regions below frac of the area join the neighbour with the longest shared border
+    (of the same colour class when cls is given and such a neighbour exists)."""
+    tot = area.sum()
+    for _ in range(30):
+        n = lab.max() + 1
+        ra = np.bincount(lab, area, n)
+        m = lab[a] != lab[b]
+        s = np.concatenate([lab[a][m], lab[b][m]]); t = np.concatenate([lab[b][m], lab[a][m]])
+        w = np.concatenate([elen[m]] * 2)
+        if cls is not None:
+            rc = np.zeros(n, np.int64); rc[lab] = cls
+            w = w * np.where(rc[s] == rc[t], 1.0, 1e-3)
+        keep = ra[s] < frac * tot
+        if not keep.any():
+            break
+        s, t, w = s[keep], t[keep], w[keep]
+        key = s * n + t
+        uk, inv = np.unique(key, return_inverse=True)
+        bw = np.bincount(inv, w)
+        ss, tt = uk // n, uk % n
+        o = np.lexsort((-bw, ss))
+        first = np.r_[True, ss[o][1:] != ss[o][:-1]]
+        tgt = np.arange(n)
+        for x, y in zip(ss[o][first], tt[o][first]):
+            if ra[y] >= ra[x]:
+                tgt[x] = y
+        new = tgt[lab]
+        if np.array_equal(new, lab):
+            break
+        lab = _relabel(new)
+    return lab
+
+
+def _gap_merge(lab, cls, area, a, b, ev, verts, elen, pairs_within, gapf=0.6, small=0.01):
+    """Group small islands of one colour (mostly bordered by another colour) that lie close together."""
+    n = lab.max() + 1
+    ra = np.bincount(lab, area, n)
+    tot = area.sum()
+    size = np.sqrt(ra)
+    rc = np.zeros(n, np.int64); rc[lab] = cls
+    bnd = lab[a] != lab[b]
+    diff = bnd & (cls[a] != cls[b])
+    bl = np.bincount(np.concatenate([lab[a][bnd], lab[b][bnd]]), np.concatenate([elen[bnd]] * 2), n)
+    bd = np.bincount(np.concatenate([lab[a][diff], lab[b][diff]]), np.concatenate([elen[diff]] * 2), n)
+    island = (bd > 0.7 * np.maximum(bl, 1e-12)) & (ra < small * tot)
+    sel = bnd & (island[lab[a]] | island[lab[b]])
+    if not sel.any():
+        return lab
+    e = ev[sel]
+    vr = np.concatenate([np.stack([e[:, 0], lab[a][sel]], 1), np.stack([e[:, 1], lab[a][sel]], 1),
+                         np.stack([e[:, 0], lab[b][sel]], 1), np.stack([e[:, 1], lab[b][sel]], 1)])
+    vr = np.unique(vr, axis=0)
+    vr = vr[island[vr[:, 1]]]
+    if len(vr) < 2:
+        return lab
+    r = gapf * float(size[island].max())
+    pi, pj = pairs_within(verts[vr[:, 0]], r)
+    ri, rj = vr[pi, 1], vr[pj, 1]
+    dist = np.linalg.norm(verts[vr[pi, 0]] - verts[vr[pj, 0]], axis=1)
+    ok = (ri != rj) & (rc[ri] == rc[rj]) & (dist < gapf * np.minimum(size[ri], size[rj]))
+    parent = np.arange(n)
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for x, y in set(zip(ri[ok].tolist(), rj[ok].tolist())):
+        fx, fy = find(x), find(y)
+        if fx != fy:
+            parent[fy] = fx
+    root = np.array([find(i) for i in range(n)])
+    return _relabel(root[lab])
+
+
+def segment_parts(area, a, b, ev, verts, elen, cost, cls, pairs_within, detail=0.5, min_frac=0.0005,
+                  log=print):
+    """Automatic parts. cost: crease cost per adjacency, cls: colour class per face (zeros = shape only)."""
+    nf = len(area)
+    tot = area.sum()
+    stop1 = 0.30 - 0.10 * detail
+    stop2 = 0.15 - 0.10 * detail
+    big = 0.08
+    frac = 0.03 - 0.02 * detail
+    # 1. colour regions (connected faces of one colour class)
+    same = cls[a] == cls[b]
+    col = _components(nf, a[same], b[same])
+    col = _merge_small(col, area, a, b, elen, min_frac)
+    c = cost.copy()
+    c[col[a] != col[b]] = 10.0
+    # 2. coarse crease split
+    lab = segment(area, a, b, c, elen, stop1, 0, min_frac * 0.6, log=lambda m: None) - 1
+    lab = _merge_small(lab, area, a, b, elen, min_frac, cls)
+    log(f"  auto parts: {len(np.unique(cls))} colours, {lab.max() + 1} coarse parts")
+    # 3. finer split inside the large parts only, fragments absorbed inside them
+    ra = np.bincount(lab, area) / tot
+    nxt = lab.max() + 1
+    lab = lab.copy()
+    for r in np.flatnonzero(ra > big):
+        m = lab == r
+        idx = np.flatnonzero(m)
+        loc = -np.ones(nf, np.int64); loc[idx] = np.arange(len(idx))
+        e = m[a] & m[b]
+        sub = segment(area[idx], loc[a[e]], loc[b[e]], c[e], elen[e], stop2, 0,
+                      min_frac=frac * tot / area[idx].sum(), log=lambda s: None) - 1
+        lab[idx] = sub + nxt
+        nxt += sub.max() + 1
+    lab = _relabel(lab)
+    # 4. small islands of one colour close together -> one part
+    lab = _gap_merge(lab, cls, area, a, b, ev, verts, elen, pairs_within)
+    log(f"  auto parts: {lab.max() + 1} parts")
+    return lab + 1

@@ -40,13 +40,14 @@ class PlegmaPart(bpy.types.PropertyGroup):
 class PlegmaSettings(bpy.types.PropertyGroup):
     # split
     split_method: EnumProperty(name="Split by", items=[
+        ('AUTO', "Automatic (colour + shape)", "Parts from the texture colours and the creases: each colour region, then large regions split at their creases; small islands close together (letters, cells) are grouped"),
         ('SMART', "Smart (shape)", "From the shape: parts are split at creases and grooves. Colour only helps if you want it to"),
         ('COLOR', "Colour (texture)", "Automatically from the texture or vertex colour - useful for AI models"),
         ('LOOSE', "Loose parts", "Every loose piece becomes a part"),
         ('MATERIAL', "Materials", "Every material becomes a part"),
         ('ANGLE', "Edge angle", "Regions separated by sharp edges"),
         ('FACESETS', "Face Sets", "Use the Face Sets you already painted"),
-    ], default='SMART')
+    ], default='AUTO')
     detail: FloatProperty(name="Detail", min=0.0, max=1.0, default=0.5, subtype='FACTOR',
                           description="Higher = more, smaller parts (shallower creases count as borders)")
     color_weight: FloatProperty(name="Colour help", min=0.0, max=2.0, default=0.3,

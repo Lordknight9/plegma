@@ -59,7 +59,11 @@ class PLEGMA_PT_split(_Sub, bpy.types.Panel):
         ob = jobs.source_of(ctx.active_object)
         col = layout.column(align=True)
         col.prop(s, "split_method", text="")
-        if s.split_method == 'SMART':
+        if s.split_method == 'AUTO':
+            col.prop(s, "detail", slider=True)
+            col.prop(s, "min_region")
+            col.prop(s, "also_loose")
+        elif s.split_method == 'SMART':
             col.prop(s, "detail", slider=True)
             col.prop(s, "color_weight")
             col.prop(s, "max_parts")

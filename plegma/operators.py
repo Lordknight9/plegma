@@ -159,8 +159,11 @@ class PLEGMA_OT_split(bpy.types.Operator):
         t = time.time()
         colors = None
         try:
-            if s.split_method == 'SMART':
-                lab = seg.by_smart(ob, s.detail, s.color_weight, s.max_parts, s.min_region / 100.0, log=_log)
+            if s.split_method in {'SMART', 'AUTO'}:
+                if s.split_method == 'AUTO':
+                    lab = seg.by_smart(ob, s.detail, 0.0, 0, s.min_region / 100.0, proxy_faces=80000, log=_log, auto=True)
+                else:
+                    lab = seg.by_smart(ob, s.detail, s.color_weight, s.max_parts, s.min_region / 100.0, log=_log)
                 if s.also_loose:
                     loose = seg.by_loose(me)
                     if loose.max() > 0:

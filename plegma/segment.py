@@ -380,7 +380,7 @@ def _tri_adjacency(T):
 
 
 def by_smart(obj, detail=0.5, color_weight=0.3, max_parts=0, min_frac=0.003, proxy_faces=40000, log=print,
-             convex_factor=0.15):
+             convex_factor=0.15, auto=False):
     """Shape-aware split: parts meet at concave creases. Works on a decimated proxy for speed."""
     from mathutils.bvhtree import BVHTree
     from . import smart
@@ -440,7 +440,7 @@ def by_smart(obj, detail=0.5, color_weight=0.3, max_parts=0, min_frac=0.003, pro
         near[i] = h[2] if h[2] is not None else 0
 
     lab_col = None
-    if color_weight > 0:
+    if color_weight > 0 or auto:
         col, _ = face_colors(obj)
         if col is not None:
             _, _, farea = face_arrays(me)
@@ -451,10 +451,38 @@ def by_smart(obj, detail=0.5, color_weight=0.3, max_parts=0, min_frac=0.003, pro
             pc[has] = acc[has] / w[has, None]
             lab_col = _to_lab(pc)
 
-    cost = smart.edge_costs(sn, cen, a, b, lab_col, color_weight, convex_factor)
-    cost = smart.smooth_edge_costs(cost, a, b, len(T), 1)
-    stop = 0.45 - 0.4 * detail
-    plab = smart.segment(area, a, b, cost, elen, stop, max_parts, min_frac, log)
+    if auto:
+        cost = smart.edge_costs(sn, cen, a, b, None, 0.0, convex_factor)
+        cost = smart.smooth_edge_costs(cost, a, b, len(T), 1)
+        if lab_col is not None:
+            lc = lab_col.copy()
+            for _ in range(2):           # smooth the colour over neighbours (texture noise)
+                acc = lc.copy(); cnt = np.ones(len(lc))
+                for s, t in ((a, b), (b, a)):
+                    np.add.at(acc, s, lc[t]); np.add.at(cnt, s, 1)
+                lc = acc / cnt[:, None]
+            cls = smart.color_classes(lc)
+        else:
+            cls = np.zeros(len(T), np.int64)
+
+        def pairs_within(pts, r):
+            from mathutils.kdtree import KDTree
+            kd = KDTree(len(pts))
+            for i, p in enumerate(pts):
+                kd.insert(p, i)
+            kd.balance()
+            pi, pj = [], []
+            for i, p in enumerate(pts):
+                for _, j, _ in kd.find_range(p, r):
+                    if j > i:
+                        pi.append(i); pj.append(j)
+            return np.array(pi, np.int64), np.array(pj, np.int64)
+        plab = smart.segment_parts(area, a, b, ev_, Vw, elen, cost, cls, pairs_within, detail, min_frac, log)
+    else:
+        cost = smart.edge_costs(sn, cen, a, b, lab_col, color_weight, convex_factor)
+        cost = smart.smooth_edge_costs(cost, a, b, len(T), 1)
+        stop = 0.45 - 0.4 * detail
+        plab = smart.segment(area, a, b, cost, elen, stop, max_parts, min_frac, log)
     labels = plab[near]
 
     # tidy borders on the full mesh
